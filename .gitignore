@@ -22,6 +22,9 @@
 *.dylib
 *.dll
 
+# 但允许 openssl 文件夹中的 DLL(项目运行必需的依赖)
+!openssl/*.dll
+
 # Fortran module files
 *.mod
 *.smod
