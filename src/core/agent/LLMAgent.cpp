@@ -15,6 +15,11 @@ LLMAgent::LLMAgent(QObject *parent) : QObject(parent) {
     m_timeoutTimer->setSingleShot(true);
     m_timeoutTimer->setInterval(30000);  // 30秒超时
     
+    // 默认角色定义
+    m_systemPrompt = "你是一个专业的 AI 助手，能够帮助用户完成各种任务。"
+                     "你可以使用工具来执行文件操作和命令行操作。"
+                     "请简洁、准确地回答用户的问题。";
+    
     connect(m_timeoutTimer, &QTimer::timeout, this, [this]() {
         qDebug() << "WARNING: 网络请求超时!";
         if (m_currentReply) {
@@ -26,15 +31,9 @@ LLMAgent::LLMAgent(QObject *parent) : QObject(parent) {
 }
 
 void LLMAgent::setSystemPrompt(const QString& prompt) {
-    m_systemPrompt = prompt;
-}
-
-void LLMAgent::setConfig(const LLMConfig& config) {
-    m_config = config;
-}
-
-LLMConfig LLMAgent::getConfig() const {
-    return m_config;
+    if (!prompt.isEmpty()) {
+        m_systemPrompt += "\n" + prompt;  // 追加用户设置的提示词
+    }
 }
 
 void LLMAgent::sendMessage(const QString& prompt) {
@@ -52,43 +51,46 @@ void LLMAgent::sendPromptInternal(const QString& prompt, bool saveToHistory) {
 
     m_fullContent.clear();
     m_saveToHistory = saveToHistory;
-    const bool hasTools = !m_tools.isEmpty();
-    m_isToolMode = hasTools;
+    m_isToolMode = !m_tools.isEmpty();
     
     // 构造用户消息
     QJsonObject userMsg;
     userMsg["role"] = "user";
     userMsg["content"] = prompt;
     
-    QJsonArray messages;
-    
     if (saveToHistory) {
-        // 添加到对话历史
         m_conversationHistory.append(userMsg);
     }
     
-    if (hasTools) {
+    // 准备消息列表并发送
+    QJsonArray messages = prepareMessagesForSend(userMsg, saveToHistory);
+    sendMessageInternal(messages);
+}
+
+QJsonArray LLMAgent::prepareMessagesForSend(const QJsonObject& userMsg, bool saveToHistory) {
+    QJsonArray messages;
+    
+    if (m_isToolMode) {
+        // 工具模式：使用独立的消息历史
         m_pendingToolCalls.clear();
         m_toolResults.clear();
-        if (saveToHistory) {
-            m_currentMessages.append(userMsg);
-        } else {
-            m_currentMessages = QJsonArray();
-            m_currentMessages.append(userMsg);
+        
+        if (!saveToHistory) {
+            m_currentMessages = QJsonArray();  // 单次调用，清空历史
         }
+        m_currentMessages.append(userMsg);
         messages = m_currentMessages;
     } else if (saveToHistory) {
-        // 使用完整对话历史
+        // 多轮对话：使用完整对话历史
         for (const QJsonValue& msg : m_conversationHistory) {
             messages.append(msg);
         }
     } else {
-        // 单次问答，只发送当前消息
+        // 单次问答：只发送当前消息
         messages.append(userMsg);
     }
     
-    // 委托给统一的发送函数，按已注册工具自动附带
-    sendMessageInternal(messages);
+    return messages;
 }
 
 
@@ -144,11 +146,9 @@ void LLMAgent::setOutputMode(OutputMode mode) {
 }
 
 void LLMAgent::sendMessageInternal(const QJsonArray& messages) {
-    // 获取配置
-    QString apiKey = m_config.apiKey.isEmpty() 
-        ? ConfigManager::getApiKey() : m_config.apiKey;
-    QString baseUrl = m_config.baseUrl.isEmpty() 
-        ? ConfigManager::getBaseUrl() : m_config.baseUrl;
+    // 从配置管理器获取配置
+    QString apiKey = ConfigManager::getApiKey();
+    QString baseUrl = ConfigManager::getBaseUrl();
     
     if (apiKey.isEmpty()) {
         emit errorOccurred("API Key is empty! Please configure it first.");
@@ -157,6 +157,9 @@ void LLMAgent::sendMessageInternal(const QJsonArray& messages) {
     
     // 构造请求（已注册工具会自动附带）
     QJsonObject root = buildRequestJson(messages);
+
+    QByteArray jsonData = QJsonDocument(root).toJson(QJsonDocument::Indented);
+    qDebug().noquote() << "[Request JSON]" << QString::fromUtf8(jsonData);
     
     // 发送请求到 DeepSeek API
     QUrl url(baseUrl + "/chat/completions");  // DeepSeek 使用 /chat/completions
@@ -416,6 +419,10 @@ QString LLMAgent::extractFileSummary(const QString& fileResult) {
 }
 
 // ==================== SSE 流处理辅助函数 ====================
+/* 
+data: {"id":"f8ae835f-7db0-45cd-8582-302476f993b3","object":"chat.completion.chunk","created":1766478438,"model":"deepseek-chat","system_fingerprint":"fp_eaab8d114b_prod0820_fp8_kvcache"
+,"choices":[{"index":0,"delta":{"content":"我来"},"logprobs":null,"finish_reason":null}]}
+*/
 
 void LLMAgent::processStreamChunk(const QByteArray& line) {
     if (!line.startsWith("data: ")) return;
@@ -434,7 +441,7 @@ void LLMAgent::processStreamChunk(const QByteArray& line) {
     QJsonObject delta = choice["delta"].toObject();
     
     // 累积 finish_reason
-    if (choice.contains("finish_reason") && !choice["finish_reason"].isNull()) {
+    if (choice.contains("finish_reason") && !choice["finish_reason"].isNull()) {//如果有字段，且不是null代表结束了，且如果携带工具调用的时候会显示“tool_calls”
         m_lastFinishReason = choice["finish_reason"].toString();
         qDebug() << "[Detect] 检测到 finish_reason:" << m_lastFinishReason;
     }
@@ -443,9 +450,14 @@ void LLMAgent::processStreamChunk(const QByteArray& line) {
     if (delta.contains("content")) {
         QString content = delta["content"].toString();
         m_fullContent += content;
+        //发送读取的字节流
         emit chunkReceived(content);
     }
     
+    /*
+    data: {"id":"f8ae835f-7db0-45cd-8582-302476f993b3","object":"chat.completion.chunk","created":1766478438,"model":"deepseek-chat","system_fingerprint":"fp_eaab8d114b_prod0820_fp8_kvcache"
+    ,"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_00_DvuHu0LSMPedPY4cTMP0s0D5","type":"function","function":{"name":"create_file","arguments":""}}]},"logprobs":null,"finish_reason":null}]}
+    */
     // 累积 tool_calls
     if (delta.contains("tool_calls")) {
         QJsonArray toolCallsArray = delta["tool_calls"].toArray();
@@ -462,7 +474,8 @@ void LLMAgent::handleStreamFinished() {
         qDebug() << "错误: m_currentReply 为空";
         return;
     }
-    
+    // 无论成功失败，先清空缓冲区
+    m_currentReply->readAll();
     // 处理网络错误
     if (m_currentReply->error() != QNetworkReply::NoError) {
         qDebug() << "[FAIL] 网络请求失败:" << m_currentReply->errorString();
@@ -474,27 +487,20 @@ void LLMAgent::handleStreamFinished() {
         return;
     }
     
-    m_currentReply->readAll();
-    // 根据 finish_reason 判断响应类型
-    if (m_lastFinishReason == "tool_calls") {
-        if (!m_streamingToolCallsJson.isEmpty()) {
-            QJsonArray assembledToolCalls = this->assembleToolCalls();
-            
-            // 构造 assistant message 并添加到历史
-            QJsonObject assistantMsg;
-            assistantMsg["role"] = "assistant";
-            if (!m_fullContent.isEmpty()) {
-                assistantMsg["content"] = m_fullContent;
-            }
-            assistantMsg["tool_calls"] = assembledToolCalls;
-            m_currentMessages.append(assistantMsg);
-            
-            handleToolUseResponse(assembledToolCalls);
-        } else {
-            qDebug() << "WARNING: finish_reason 是 tool_calls 但没有累积到工具调用数据";
-            m_isToolMode = false;
-            emit finished(m_fullContent);
+
+    const bool hasToolCalls = (m_lastFinishReason == "tool_calls");
+    if (hasToolCalls && !m_streamingToolCallsJson.isEmpty()) {
+        QJsonArray assembledToolCalls = assembleToolCalls();
+        
+        QJsonObject assistantMsg;
+        assistantMsg["role"] = "assistant";
+        if (!m_fullContent.isEmpty()) {
+            assistantMsg["content"] = m_fullContent;
         }
+        assistantMsg["tool_calls"] = assembledToolCalls;
+        m_currentMessages.append(assistantMsg);
+        
+        handleToolUseResponse(assembledToolCalls);
     } else {
         m_isToolMode = false;
         emit finished(m_fullContent);
@@ -513,36 +519,24 @@ QJsonArray LLMAgent::assembleToolCalls() {
     QMap<int, QJsonObject> toolCallsMap;
     
     for (const QJsonValue& tcVal : m_streamingToolCallsJson) {
-        QJsonObject tc = tcVal.toObject();
-        int index = tc["index"].toInt();
-        
-        if (!toolCallsMap.contains(index)) {
-            toolCallsMap[index] = QJsonObject();
-        }
-        
-        // 合并字段
+        const QJsonObject tc = tcVal.toObject();
+        const int index = tc["index"].toInt();
         QJsonObject& current = toolCallsMap[index];
         if (tc.contains("id")) current["id"] = tc["id"];
         if (tc.contains("type")) current["type"] = tc["type"];
         
-        if (tc.contains("function")) {
-            QJsonObject funcObj = tc["function"].toObject();
+        const QJsonObject funcObj = tc["function"].toObject();
+        if (!funcObj.isEmpty()) {
             QJsonObject currentFunc = current["function"].toObject();
-            
-            if (funcObj.contains("name")) {
-                currentFunc["name"] = funcObj["name"];
-            }
+            if (funcObj.contains("name")) currentFunc["name"] = funcObj["name"];
             if (funcObj.contains("arguments")) {
-                QString args = currentFunc["arguments"].toString();
-                args += funcObj["arguments"].toString();
-                currentFunc["arguments"] = args;
+                currentFunc["arguments"] = currentFunc["arguments"].toString()
+                    + funcObj["arguments"].toString();
             }
-            
             current["function"] = currentFunc;
         }
     }
     
-    // 转换为数组
     QJsonArray result;
     for (const QJsonObject& tc : toolCallsMap.values()) {
         result.append(tc);
@@ -551,22 +545,19 @@ QJsonArray LLMAgent::assembleToolCalls() {
 }
 
 QJsonObject LLMAgent::buildRequestJson(const QJsonArray& messages) {
-    QString model = m_config.model.isEmpty() 
-        ? ConfigManager::getModel() : m_config.model;
+    QString model = ConfigManager::getModel();
     
     QJsonObject root;
     root["model"] = model;
     root["max_tokens"] = 4096;
     root["stream"] = true;
     
-    // System Prompt 作为第一条消息
+    // System Prompt 作为第一条消息（始终存在）
     QJsonArray finalMessages;
-    if (!m_systemPrompt.isEmpty()) {
-        QJsonObject systemMsg;
-        systemMsg["role"] = "system";
-        systemMsg["content"] = m_systemPrompt;
-        finalMessages.append(systemMsg);
-    }
+    QJsonObject systemMsg;
+    systemMsg["role"] = "system";
+    systemMsg["content"] = m_systemPrompt;
+    finalMessages.append(systemMsg);
     
     // 添加用户消息
     for (const QJsonValue& msg : messages) {
@@ -582,7 +573,6 @@ QJsonObject LLMAgent::buildRequestJson(const QJsonArray& messages) {
             tools.append(tool.toJson());
         }
         root["tools"] = tools;
-    }
-    
+    }    
     return root;
 }

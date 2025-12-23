@@ -12,26 +12,6 @@
 
 class QTimer;  // 前向声明
 
-// LLM 配置结构体
-struct LLMConfig {
-    QString apiKey;      // API 密钥
-    QString baseUrl;     // API 基础地址
-    QString model;       // 模型名称
-    
-    // 默认构造函数
-    LLMConfig() 
-        : baseUrl("https://api.deepseek.com")
-        , model("deepseek-chat") {}
-    
-    // 带参数构造函数
-    LLMConfig(const QString& key, const QString& url, const QString& mdl)
-        : apiKey(key), baseUrl(url), model(mdl) {}
-    
-    // 检查配置是否有效
-    bool isValid() const {
-        return !apiKey.isEmpty() && !baseUrl.isEmpty() && !model.isEmpty();
-    }
-};
 
 // 工具定义结构体
 struct Tool {
@@ -92,10 +72,6 @@ public:
     // 设置 Agent 的角色 (System Prompt)
     void setSystemPrompt(const QString& prompt);
     QString systemPrompt() const { return m_systemPrompt; }
-    
-    // 设置/获取 LLM 配置
-    void setConfig(const LLMConfig& config);
-    LLMConfig getConfig() const;
 
     // 对话历史管理
     void clearHistory();                    // 清空对话历史
@@ -144,6 +120,9 @@ private:
     // 内部发送流程
     void sendPromptInternal(const QString& prompt, bool saveToHistory);
     
+    // 准备发送的消息列表（处理工具模式和历史记录）
+    QJsonArray prepareMessagesForSend(const QJsonObject& userMsg, bool saveToHistory);
+    
     // 统一的内部发送函数（已注册工具会自动带上）
     void sendMessageInternal(const QJsonArray& messages);
     void handleToolUseResponse(const QJsonArray& content);
@@ -167,7 +146,6 @@ private:
     QString m_fullContent;
     QString m_systemPrompt;
     QJsonArray m_conversationHistory;  // 对话历史
-    LLMConfig m_config;                // LLM 配置
     bool m_saveToHistory = true;       // 是否保存到对话历史
     
     // 工具相关成员变量
