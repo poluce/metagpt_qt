@@ -24,24 +24,18 @@ private slots:
     void onSendClicked();
     void onAbortClicked();
     void onFinished(const QString& content);
-    void onChunkReceived(const QString& chunk);
-    void onToolCallRequested(const QString& toolId, const QString& toolName, const QJsonObject& input);
+    void onStreamDataReceived(const QString& data);
     void onErrorOccurred(const QString& errorMsg);
     void updateHistoryDisplay();
     void onClearHistoryClicked();
     void onTestToolClicked();
     
-    // 阶段二:工具执行生命周期槽函数
-    void onToolExecutionStarted(const QString& toolName, const QString& description);
-    void onToolExecutionCompleted(const QString& toolName, bool success, const QString& summary);
-    
-    // 阶段三: 结构化事件处理
+    // 工具事件处理（统一处理 started/completed）
     void onToolEvent(const ToolExecutionEvent& event);
 
 private:
     void setupUI();
     void loadConfig();
-    void registerTools();  // 注册工具
     
     // UI 辅助函数
     void appendUserMessage(const QString& message);   // 显示用户消息
@@ -76,6 +70,9 @@ private:
     ToolDispatcher *m_toolDispatcher;
     QString m_currentAssistantReply;  // 当前助手回复的累积内容
     bool m_pendingAssistantSeparator = false;
+    
+    // UI 显示模式（由 UI 自行管理，与 Agent 无关）
+    bool m_isDebugMode = false;
 };
 
 #endif // LLMCONFIGWIDGET_H

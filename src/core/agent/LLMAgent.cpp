@@ -1,4 +1,5 @@
 #include "LLMAgent.h"
+#include "ToolDispatcher.h"
 #include "core/utils/ConfigManager.h"
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -37,14 +38,14 @@ void LLMAgent::setSystemPrompt(const QString& prompt) {
 }
 
 void LLMAgent::sendMessage(const QString& prompt) {
-    sendPromptInternal(prompt, true);  // 保存历史
+    sendRequest(prompt, true);  // 保存历史
 }
 
 void LLMAgent::askOnce(const QString& prompt) {
-    sendPromptInternal(prompt, false);  // 不保存历史
+    sendRequest(prompt, false);  // 不保存历史
 }
 
-void LLMAgent::sendPromptInternal(const QString& prompt, bool saveToHistory) {
+void LLMAgent::sendRequest(const QString& prompt, bool saveToHistory) {
     if (m_currentReply) {
         abort();
     }
@@ -63,11 +64,11 @@ void LLMAgent::sendPromptInternal(const QString& prompt, bool saveToHistory) {
     }
     
     // 准备消息列表并发送
-    QJsonArray messages = prepareMessagesForSend(userMsg, saveToHistory);
-    sendMessageInternal(messages);
+    QJsonArray messages = buildMessageHistory(userMsg, saveToHistory);
+    postRequestToServer(messages);
 }
 
-QJsonArray LLMAgent::prepareMessagesForSend(const QJsonObject& userMsg, bool saveToHistory) {
+QJsonArray LLMAgent::buildMessageHistory(const QJsonObject& userMsg, bool saveToHistory) {
     QJsonArray messages;
     
     if (m_isToolMode) {
@@ -139,13 +140,21 @@ QList<Tool> LLMAgent::getTools() const {
     return m_tools;
 }
 
-// 阶段三: 输出模式设置
-void LLMAgent::setOutputMode(OutputMode mode) {
-    m_outputMode = mode;
-    qDebug() << "输出模式切换为:" << (mode == Debug ? "Debug" : "UserFriendly");
+void LLMAgent::setToolDispatcher(ToolDispatcher* dispatcher) {
+    m_toolDispatcher = dispatcher;
+    
+    // 自动从 dispatcher 获取并注册所有工具 Schema
+    if (dispatcher) {
+        clearTools();  // 清空旧的工具
+        QList<Tool> tools = dispatcher->getAllToolSchemas();
+        for (const Tool& tool : tools) {
+            registerTool(tool);
+        }
+        qDebug() << "工具调度器已设置，自动注册" << tools.size() << "个工具";
+    }
 }
 
-void LLMAgent::sendMessageInternal(const QJsonArray& messages) {
+void LLMAgent::postRequestToServer(const QJsonArray& messages) {
     // 从配置管理器获取配置
     QString apiKey = ConfigManager::getApiKey();
     QString baseUrl = ConfigManager::getBaseUrl();
@@ -156,7 +165,7 @@ void LLMAgent::sendMessageInternal(const QJsonArray& messages) {
     }
     
     // 构造请求（已注册工具会自动附带）
-    QJsonObject root = buildRequestJson(messages);
+    QJsonObject root = buildApiRequestBody(messages);
 
     QByteArray jsonData = QJsonDocument(root).toJson(QJsonDocument::Indented);
     qDebug().noquote() << "[Request JSON]" << QString::fromUtf8(jsonData);
@@ -179,13 +188,13 @@ void LLMAgent::sendMessageInternal(const QJsonArray& messages) {
     // 创建新请求
     m_currentReply = m_manager->post(request, QJsonDocument(root).toJson());
     
-    // NOTE: 流式数据处理 - 委托给 processStreamChunk
+    // NOTE: 流式数据处理 - 委托给 parseStreamEventLine
     connect(m_currentReply, &QNetworkReply::readyRead, this, [this]() {
         if (!m_currentReply) return;
         while (m_currentReply->canReadLine()) {
             QByteArray line = m_currentReply->readLine().trimmed();
             if (!line.isEmpty()) {
-                processStreamChunk(line);
+                parseStreamEventLine(line);
             }
         }
     });
@@ -193,15 +202,22 @@ void LLMAgent::sendMessageInternal(const QJsonArray& messages) {
     // 启动超时定时器
     m_timeoutTimer->start();
     
-    // NOTE: 请求完成处理 - 委托给 handleStreamFinished
+    // NOTE: 请求完成处理 - 委托给 onStreamFinished
     connect(m_currentReply, &QNetworkReply::finished, this, 
-            &LLMAgent::handleStreamFinished);
+            &LLMAgent::onStreamFinished);
 }
 
 
 
-void LLMAgent::handleToolUseResponse(const QJsonArray& toolCalls) {
+void LLMAgent::executeToolCalls(const QJsonArray& toolCalls) {
     m_pendingToolCalls.clear();
+    
+    // 检查是否设置了工具调度器
+    if (!m_toolDispatcher) {
+        qDebug() << "错误: 未设置 ToolDispatcher，无法执行工具调用";
+        emit errorOccurred("内部错误: 未配置工具调度器");
+        return;
+    }
     
     // 解析所有工具调用请求 (DeepSeek 格式)
     for (const QJsonValue& item : toolCalls) {
@@ -210,37 +226,18 @@ void LLMAgent::handleToolUseResponse(const QJsonArray& toolCalls) {
         // DeepSeek 格式: {id, type: "function", function: {name, arguments}}
         QString type = obj["type"].toString();
         if (type == "function") {
-            QJsonObject functionObj = obj["function"].toObject();
-            
-            ToolCall call;
-            call.id = obj["id"].toString();
-            call.name = functionObj["name"].toString();
-            
-            // arguments 是 JSON 字符串,需要解析
-            QString argsStr = functionObj["arguments"].toString();
-            QJsonDocument argsDoc = QJsonDocument::fromJson(argsStr.toUtf8());
-            call.input = argsDoc.object();
+            ToolCall call = ToolCall::fromDeepSeekJson(obj);
             
             m_pendingToolCalls.append(call);
             
-            // NOTE: 发射工具执行开始信号
-            QString description = QString("执行 %1").arg(call.name);
-            emit toolExecutionStarted(call.name, description);
+            // NOTE: 发射工具事件信号
+            emit toolEvent(ToolExecutionEvent(call));
             
-            // NOTE: 发射结构化 toolEvent 信号
-            ToolExecutionEvent event;
-            event.toolName = call.name;
-            event.status = "started";
-            event.success = true;
-            event.userMessage = QString("[Tool] 正在执行 %1...").arg(call.name);
-            event.debugMessage = QString("工具调用 ID: %1, 参数: %2")
-                .arg(call.id)
-                .arg(QString::fromUtf8(QJsonDocument(call.input).toJson(QJsonDocument::Compact)));
-            event.data = call.input;
-            emit toolEvent(event);
+            // NOTE: Agent 自治执行 - 直接调用 ToolDispatcher
+            QString result = m_toolDispatcher->dispatch(call);
             
-            // 触发信号,让外部执行工具
-            emit toolCallRequested(call.id, call.name, call.input);
+            // NOTE: 自动提交结果，完成闭环
+            submitToolResult(call.id, result);
         }
     }
 }
@@ -260,20 +257,17 @@ void LLMAgent::submitToolResult(const QString& toolId, const QString& result) {
     m_toolResults[toolId] = result;
     
     // 格式化结果(仅用于 UI 显示)
-    QString formattedResult = formatToolResultForUser(toolName, result);
+    QString formattedResult = formatToolResultSummary(toolName, result);
     
-    // 发射工具执行完成信号 (UI 显示用)
+    // 发射工具事件信号
     bool success = !result.contains("失败") && !result.contains("错误");
-    emit toolExecutionCompleted(toolName, success, formattedResult);
-    
-    // 发射结构化 toolEvent 信号
     ToolExecutionEvent event;
     event.toolName = toolName;
+    event.toolId = toolId;
     event.status = "completed";
+    event.rawResult = result;
+    event.formattedResult = formattedResult;
     event.success = success;
-    event.userMessage = formattedResult;  // UI 显示用摘要
-    event.debugMessage = QString("工具执行完成, ID: %1\n原始结果: %2").arg(toolId, result);
-    event.data = QJsonObject{{"result", result}, {"formatted", formattedResult}};
     emit toolEvent(event);
     
     // 检查是否所有工具都已返回结果
@@ -286,11 +280,11 @@ void LLMAgent::submitToolResult(const QString& toolId, const QString& result) {
     }
     
     if (allCompleted) {
-        continueConversationWithToolResults();
+        resumeAfterToolExecution();
     }
 }
 
-void LLMAgent::continueConversationWithToolResults() {
+void LLMAgent::resumeAfterToolExecution() {
     // DeepSeek 格式: 每个工具结果作为单独的消息
     for (const ToolCall& call : m_pendingToolCalls) {
         QString result = m_toolResults[call.id];
@@ -312,24 +306,24 @@ void LLMAgent::continueConversationWithToolResults() {
     
     // 使用 QTimer::singleShot 延迟发送，确保当前请求的 finished 处理完全结束
     QTimer::singleShot(0, this, [this]() {
-        sendMessageInternal(m_currentMessages);
+        postRequestToServer(m_currentMessages);
     });
 }
 
 // ==================== 阶段一:结果格式化和智能摘要 ====================
 
-QString LLMAgent::formatToolResultForUser(const QString& toolName, const QString& rawResult) {
+QString LLMAgent::formatToolResultSummary(const QString& toolName, const QString& rawResult) {
     if (toolName == "execute_command") {
-        return extractCommandSummary(rawResult);
+        return summarizeCommandOutput(rawResult);
     } else if (toolName == "create_file") {
-        return extractFileSummary(rawResult);
+        return summarizeFileOperation(rawResult);
     }
     
     // 未知工具,返回原始结果
     return rawResult;
 }
 
-QString LLMAgent::extractCommandSummary(const QString& cmdOutput) {
+QString LLMAgent::summarizeCommandOutput(const QString& cmdOutput) {
     // 解析命令输出,提取关键信息
     
     // 检查是否包含 "退出码"
@@ -395,7 +389,7 @@ QString LLMAgent::extractCommandSummary(const QString& cmdOutput) {
     return cmdOutput;
 }
 
-QString LLMAgent::extractFileSummary(const QString& fileResult) {
+QString LLMAgent::summarizeFileOperation(const QString& fileResult) {
     // 解析文件操作结果
     
     if (fileResult.contains("成功")) {
@@ -424,7 +418,7 @@ data: {"id":"f8ae835f-7db0-45cd-8582-302476f993b3","object":"chat.completion.chu
 ,"choices":[{"index":0,"delta":{"content":"我来"},"logprobs":null,"finish_reason":null}]}
 */
 
-void LLMAgent::processStreamChunk(const QByteArray& line) {
+void LLMAgent::parseStreamEventLine(const QByteArray& line) {
     if (!line.startsWith("data: ")) return;
     
     QString data = QString::fromUtf8(line.mid(6));
@@ -451,7 +445,7 @@ void LLMAgent::processStreamChunk(const QByteArray& line) {
         QString content = delta["content"].toString();
         m_fullContent += content;
         //发送读取的字节流
-        emit chunkReceived(content);
+        emit streamDataReceived(content);
     }
     
     /*
@@ -467,7 +461,7 @@ void LLMAgent::processStreamChunk(const QByteArray& line) {
     }
 }
 
-void LLMAgent::handleStreamFinished() {
+void LLMAgent::onStreamFinished() {
     m_timeoutTimer->stop();
     
     if (!m_currentReply) {
@@ -478,19 +472,14 @@ void LLMAgent::handleStreamFinished() {
     m_currentReply->readAll();
     // 处理网络错误
     if (m_currentReply->error() != QNetworkReply::NoError) {
-        qDebug() << "[FAIL] 网络请求失败:" << m_currentReply->errorString();
-        
-        emit errorOccurred(m_currentReply->errorString());
-        m_currentReply->deleteLater();
-        m_currentReply = nullptr;
-        m_isToolMode = false;
+        handleNetworkError(m_currentReply->errorString());
         return;
     }
     
 
     const bool hasToolCalls = (m_lastFinishReason == "tool_calls");
     if (hasToolCalls && !m_streamingToolCallsJson.isEmpty()) {
-        QJsonArray assembledToolCalls = assembleToolCalls();
+        QJsonArray assembledToolCalls = mergeStreamingToolCalls(m_streamingToolCallsJson);
         
         QJsonObject assistantMsg;
         assistantMsg["role"] = "assistant";
@@ -500,7 +489,7 @@ void LLMAgent::handleStreamFinished() {
         assistantMsg["tool_calls"] = assembledToolCalls;
         m_currentMessages.append(assistantMsg);
         
-        handleToolUseResponse(assembledToolCalls);
+        executeToolCalls(assembledToolCalls);
     } else {
         m_isToolMode = false;
         emit finished(m_fullContent);
@@ -515,23 +504,32 @@ void LLMAgent::handleStreamFinished() {
     m_currentReply = nullptr;
 }
 
-QJsonArray LLMAgent::assembleToolCalls() {
+void LLMAgent::handleNetworkError(const QString& errorMsg) {
+    qDebug() << "[FAIL] 网络请求失败:" << errorMsg;
+    emit errorOccurred(errorMsg);
+    if (m_currentReply) {
+        m_currentReply->deleteLater();
+        m_currentReply = nullptr;
+    }
+    m_isToolMode = false;
+}
+
+QJsonArray LLMAgent::mergeStreamingToolCalls(const QJsonArray& streamingToolCallsJson) {
     QMap<int, QJsonObject> toolCallsMap;
     
-    for (const QJsonValue& tcVal : m_streamingToolCallsJson) {
-        const QJsonObject tc = tcVal.toObject();
-        const int index = tc["index"].toInt();
+    for (const QJsonValue& tcVal : streamingToolCallsJson) {
+        const QJsonObject toolObject = tcVal.toObject();
+        const int index = toolObject["index"].toInt();
         QJsonObject& current = toolCallsMap[index];
-        if (tc.contains("id")) current["id"] = tc["id"];
-        if (tc.contains("type")) current["type"] = tc["type"];
+        if (toolObject.contains("id")) current["id"] = toolObject["id"];
+        if (toolObject.contains("type")) current["type"] = toolObject["type"];
         
-        const QJsonObject funcObj = tc["function"].toObject();
+        const QJsonObject funcObj = toolObject["function"].toObject();
         if (!funcObj.isEmpty()) {
             QJsonObject currentFunc = current["function"].toObject();
             if (funcObj.contains("name")) currentFunc["name"] = funcObj["name"];
             if (funcObj.contains("arguments")) {
-                currentFunc["arguments"] = currentFunc["arguments"].toString()
-                    + funcObj["arguments"].toString();
+                currentFunc["arguments"] = currentFunc["arguments"].toString()+funcObj["arguments"].toString();
             }
             current["function"] = currentFunc;
         }
@@ -544,7 +542,7 @@ QJsonArray LLMAgent::assembleToolCalls() {
     return result;
 }
 
-QJsonObject LLMAgent::buildRequestJson(const QJsonArray& messages) {
+QJsonObject LLMAgent::buildApiRequestBody(const QJsonArray& messages) {
     QString model = ConfigManager::getModel();
     
     QJsonObject root;

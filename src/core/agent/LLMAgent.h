@@ -9,53 +9,10 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QDebug>
+#include "ToolTypes.h"
 
 class QTimer;  // 前向声明
-
-
-// 工具定义结构体
-struct Tool {
-    QString name;           // 工具名称
-    QString description;    // 工具描述
-    QJsonObject inputSchema; // 输入参数 JSON Schema
-    
-    // 转换为 DeepSeek API 格式 (OpenAI 兼容)
-    QJsonObject toJson() const {
-        QJsonObject functionObj;
-        functionObj["name"] = name;
-        functionObj["description"] = description;
-        functionObj["parameters"] = inputSchema;  // DeepSeek 使用 parameters
-        
-        QJsonObject obj;
-        obj["type"] = "function";  // DeepSeek 需要包装在 function 中
-        obj["function"] = functionObj;
-        return obj;
-    }
-};
-
-
-// 工具调用请求结构体
-struct ToolCall {
-    QString id;             // 工具调用 ID
-    QString name;           // 工具名称
-    QJsonObject input;      // 输入参数
-};
-
-// 阶段三: 输出模式枚举
-enum OutputMode {
-    UserFriendly,  // 用户友好模式: 只显示关键信息
-    Debug          // 调试模式: 显示所有细节
-};
-
-// 阶段三: 工具执行事件结构体
-struct ToolExecutionEvent {
-    QString toolName;       // 工具名称
-    QString status;         // 状态: "started", "progress", "completed"
-    bool success;           // 是否成功 (仅 completed 时有效)
-    QString userMessage;    // 用户友好消息
-    QString debugMessage;   // 调试详细消息
-    QJsonObject data;       // 附加数据
-};
+class ToolDispatcher;  // 前向声明
 
 
 class LLMAgent : public QObject {
@@ -82,33 +39,23 @@ public:
     void abort();
 
     // 工具管理
-    void registerTool(const Tool& tool);           // 注册工具
-    void clearTools();                             // 清空所有工具
     QList<Tool> getTools() const;                  // 获取已注册的工具列表
     
-    // 阶段三: 输出模式管理
-    void setOutputMode(OutputMode mode);
-    OutputMode outputMode() const { return m_outputMode; }
+    /**
+     * @brief 设置工具调度器（Agent 自治执行工具调用）
+     * @param dispatcher 工具调度器指针（生命周期由外部管理）
+     * @note 会自动从 dispatcher 获取并注册所有工具 Schema
+     */
+    void setToolDispatcher(ToolDispatcher* dispatcher);
 
 signals:
-    void chunkReceived(const QString& chunk);    // 收到文本片段
+    void streamDataReceived(const QString& data);    // 收到流式字节流数据
     void finished(const QString& fullContent);   // 请求圆满结束
     
-    // 工具调用相关信号
-    void toolCallRequested(const QString& toolId,
-                          const QString& toolName,
-                          const QJsonObject& input);  // Claude 请求调用工具
+    // 错误信号
     void errorOccurred(const QString& errorMsg); // 发生错误
     
-    // 阶段二:增强信号系统
-    void toolExecutionStarted(const QString& toolName, 
-                             const QString& description);
-    void toolExecutionCompleted(const QString& toolName, 
-                               bool success, 
-                               const QString& summary);
-    void thinkingMessage(const QString& message);
-    
-    // 阶段三: 结构化事件信号
+    // 工具事件信号（结构化事件，统一处理）
     void toolEvent(const ToolExecutionEvent& event);
 
 public slots:
@@ -118,27 +65,32 @@ public slots:
 private:
 
     // 内部发送流程
-    void sendPromptInternal(const QString& prompt, bool saveToHistory);
+    void sendRequest(const QString& prompt, bool saveToHistory);
     
     // 准备发送的消息列表（处理工具模式和历史记录）
-    QJsonArray prepareMessagesForSend(const QJsonObject& userMsg, bool saveToHistory);
+    QJsonArray buildMessageHistory(const QJsonObject& userMsg, bool saveToHistory);
     
     // 统一的内部发送函数（已注册工具会自动带上）
-    void sendMessageInternal(const QJsonArray& messages);
-    void handleToolUseResponse(const QJsonArray& content);
-    void continueConversationWithToolResults();
+    void postRequestToServer(const QJsonArray& messages);
+    void executeToolCalls(const QJsonArray& toolCalls);
+    void resumeAfterToolExecution();
     
     // 阶段一:结果格式化和智能摘要
-    QString formatToolResultForUser(const QString& toolName, 
+    QString formatToolResultSummary(const QString& toolName, 
                                     const QString& rawResult);
-    QString extractCommandSummary(const QString& cmdOutput);
-    QString extractFileSummary(const QString& fileResult);
+    QString summarizeCommandOutput(const QString& cmdOutput);
+    QString summarizeFileOperation(const QString& fileResult);
     
-    // SSE 流处理辅助函数
-    void processStreamChunk(const QByteArray& line);
-    void handleStreamFinished();
-    QJsonArray assembleToolCalls();
-    QJsonObject buildRequestJson(const QJsonArray& messages);
+    // 流式事件处理辅助函数
+    void parseStreamEventLine(const QByteArray& line);
+    void onStreamFinished();
+    void handleNetworkError(const QString& errorMsg);
+    QJsonArray mergeStreamingToolCalls(const QJsonArray& streamingToolCallsJson);
+    QJsonObject buildApiRequestBody(const QJsonArray& messages);
+    
+    // 工具管理（内部调用）
+    void registerTool(const Tool& tool);           // 注册工具
+    void clearTools();                             // 清空所有工具
 
     QNetworkAccessManager *m_manager;
     QNetworkReply *m_currentReply = nullptr;
@@ -159,8 +111,8 @@ private:
     QString m_lastFinishReason;        // 最后的 finish_reason
     QJsonArray m_streamingToolCallsJson; // 累积的工具调用 JSON 片段
     
-    // 阶段三: 输出模式
-    OutputMode m_outputMode = UserFriendly;
+    // 工具调度器（Agent 自治执行）
+    ToolDispatcher* m_toolDispatcher = nullptr;
 
 };
 

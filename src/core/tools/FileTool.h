@@ -13,6 +13,11 @@
 
 class FileTool {
 public:
+    // ==================== 工具名称常量 ====================
+    static constexpr const char* CREATE_FILE = "create_file";
+    static constexpr const char* VIEW_FILE = "view_file";
+    static constexpr const char* READ_FILE_LINES = "read_file_lines";
+    
     // ==================== 工具 Schema 定义 ====================
     
     /**
@@ -20,7 +25,7 @@ public:
      */
     static Tool getCreateFileSchema() {
         Tool tool;
-        tool.name = "create_file";
+        tool.name = CREATE_FILE;
         tool.description = "在指定目录创建一个文本文件";
         tool.inputSchema = QJsonObject{
             {"type", "object"},
@@ -48,7 +53,7 @@ public:
      */
     static Tool getViewFileSchema() {
         Tool tool;
-        tool.name = "view_file";
+        tool.name = VIEW_FILE;
         tool.description = "读取文件的完整内容。直接使用 Qt 的文件 API 读取，自动处理 UTF-8 编码，比执行 cat 命令更可靠。返回文件路径、大小、行数和完整内容。";
         tool.inputSchema = QJsonObject{
             {"type", "object"},
@@ -68,7 +73,7 @@ public:
      */
     static Tool getReadFileLinesSchema() {
         Tool tool;
-        tool.name = "read_file_lines";
+        tool.name = READ_FILE_LINES;
         tool.description = "读取文件的指定行范围。适用于查看大文件的特定部分。行号从 1 开始，结果包含行号前缀方便定位。";
         tool.inputSchema = QJsonObject{
             {"type", "object"},
@@ -91,7 +96,46 @@ public:
         return tool;
     }
     
-    // ==================== 工具实现 ====================
+    // ==================== 工具执行入口（接收 JSON 参数） ====================
+    
+    /**
+     * @brief 执行 create_file 工具
+     * @param input JSON 参数 {directory, filename, content?}
+     */
+    static QString executeCreateFile(const QJsonObject& input) {
+        QString directory = input["directory"].toString();
+        QString filename = input["filename"].toString();
+        QString content = input.value("content").toString();
+        
+        qDebug() << "[FileTool] 创建文件:" << directory << "/" << filename;
+        return createFile(directory, filename, content);
+    }
+    
+    /**
+     * @brief 执行 view_file 工具
+     * @param input JSON 参数 {file_path}
+     */
+    static QString executeViewFile(const QJsonObject& input) {
+        QString filePath = input["file_path"].toString();
+        
+        qDebug() << "[FileTool] 读取文件:" << filePath;
+        return readFile(filePath);
+    }
+    
+    /**
+     * @brief 执行 read_file_lines 工具
+     * @param input JSON 参数 {file_path, start_line, end_line}
+     */
+    static QString executeReadFileLines(const QJsonObject& input) {
+        QString filePath = input["file_path"].toString();
+        int startLine = input["start_line"].toInt();
+        int endLine = input["end_line"].toInt();
+        
+        qDebug() << "[FileTool] 读取文件行:" << filePath << startLine << "-" << endLine;
+        return readFileLines(filePath, startLine, endLine);
+    }
+    
+    // ==================== 工具实现（核心函数） ====================
 public:
     // 在指定目录创建文件
     static QString createFile(const QString& directory, 
@@ -99,6 +143,24 @@ public:
                              const QString& content) {
         // 转换 MSYS/Git Bash 路径格式 (/e/xxx -> E:/xxx)
         QString winDirectory = convertMsysPath(directory);
+        
+        // NOTE: 写入限制 - 只能在程序启动目录及其子目录内创建文件
+        QString baseWorkDir = QDir::currentPath();  // 程序启动时的目录
+        QString canonicalBase = QDir(baseWorkDir).canonicalPath();
+        QString canonicalTarget = QDir(winDirectory).canonicalPath();
+        
+        // 如果目标目录不存在，尝试使用绝对路径
+        if (canonicalTarget.isEmpty()) {
+            canonicalTarget = QDir::cleanPath(QDir(baseWorkDir).absoluteFilePath(winDirectory));
+        }
+        
+        if (!canonicalTarget.startsWith(canonicalBase)) {
+            qDebug() << "[FileTool] 创建文件被拒绝: 目标目录" << winDirectory 
+                     << "不在工作目录" << baseWorkDir << "内";
+            return QString("错误: 写入操作只能在工作目录 (%1) 及其子目录内执行，无法操作 %2")
+                .arg(baseWorkDir)
+                .arg(winDirectory);
+        }
         
         // 确保目录存在
         QDir dir(winDirectory);

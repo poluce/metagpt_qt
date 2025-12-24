@@ -4,20 +4,31 @@
 #include <QObject>
 #include <QJsonObject>
 #include <QList>
-#include "LLMAgent.h"
+#include <QMap>
+#include <functional>
+#include "ToolTypes.h"
+
+/**
+ * @brief 工具注册条目
+ */
+struct ToolEntry {
+    Tool schema;                                          // Schema 定义
+    QString description;                                  // 中文描述
+    std::function<QString(const QJsonObject&)> execute;   // 执行函数
+};
 
 /**
  * @brief 工具调度器 - 负责分发和执行工具调用
  * 
  * 职责:
- *   - 接收工具调用请求
- *   - 路由到对应的工具实现
- *   - 返回执行结果
- *   - 提供所有可用工具的 Schema 定义
+ *   - 管理工具注册表
+ *   - 分发工具调用到对应的执行函数
+ *   - 提供所有已注册工具的 Schema
  * 
- * 设计原则:
- *   - 单一职责: 只负责工具调度，不涉及 UI 显示
- *   - 开闭原则: 新增工具只需添加分发逻辑
+ * 使用方式:
+ *   ToolDispatcher dispatcher;
+ *   dispatcher.registerTool(FileTool::getCreateFileSchema(), "创建文件", FileTool::executeCreateFile);
+ *   dispatcher.dispatch(call);
  */
 class ToolDispatcher : public QObject {
     Q_OBJECT
@@ -25,32 +36,39 @@ public:
     explicit ToolDispatcher(QObject *parent = nullptr);
     
     /**
-     * @brief 获取所有可用工具的 Schema 定义
+     * @brief 注册工具
+     * @param schema 工具 Schema 定义
+     * @param description 中文描述（用于 UI 显示）
+     * @param executor 执行函数
+     */
+    void registerTool(const Tool& schema, 
+                      const QString& description,
+                      std::function<QString(const QJsonObject&)> executor);
+    
+    /**
+     * @brief 注册默认工具集（FileTool、ShellTool）
+     */
+    void registerDefaultTools();
+    
+    /**
+     * @brief 获取所有已注册工具的 Schema 定义
      * @return 工具列表，用于注册到 LLMAgent
      */
-    static QList<Tool> getAllToolSchemas();
+    QList<Tool> getAllToolSchemas() const;
     
     /**
      * @brief 分发工具调用
-     * @param toolName 工具名称
-     * @param input 输入参数 (JSON 格式)
+     * @param call 工具调用请求
      * @return 执行结果字符串
      */
-    QString dispatch(const QString& toolName, const QJsonObject& input);
-    
+    QString dispatch(const ToolCall& call);
+
 signals:
-    /// 工具开始执行
-    void toolStarted(const QString& toolName, const QString& description);
-    
-    /// 工具执行完成
-    void toolCompleted(const QString& toolName, bool success, const QString& summary);
+    /// 工具开始执行 (description: 操作描述, params: 参数JSON)
+    void toolStarted(const QString& description, const QString& params);
 
 private:
-    // 各工具的执行函数
-    QString executeCreateFile(const QJsonObject& input);
-    QString executeCommand(const QJsonObject& input);
-    QString executeViewFile(const QJsonObject& input);
-    QString executeReadFileLines(const QJsonObject& input);
+    QMap<QString, ToolEntry> m_registry;  // 工具名 -> 注册条目
 };
 
 #endif // TOOLDISPATCHER_H

@@ -1,7 +1,7 @@
 QT       += core gui network widgets
 INCLUDEPATH += src
 
-TARGET = metagpt_qt
+TARGET = TmAgent
 TEMPLATE = app
 
 # The following define makes your compiler emit warnings if you use
