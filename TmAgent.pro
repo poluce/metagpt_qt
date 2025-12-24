@@ -14,14 +14,14 @@ SOURCES += \
     src/main.cpp \
     src/core/agent/LLMAgent.cpp \
     src/core/agent/ToolDispatcher.cpp \
-    src/core/utils/ConfigManager.cpp \
-    src/ui/LLMConfigWidget.cpp
+    src/core/utils/AppSettings.cpp \
+    src/ui/AgentChatWidget.cpp
 
 HEADERS += \
     src/core/agent/LLMAgent.h \
     src/core/agent/ToolDispatcher.h \
-    src/core/utils/ConfigManager.h \
-    src/ui/LLMConfigWidget.h
+    src/core/utils/AppSettings.h \
+    src/ui/AgentChatWidget.h
 
 # FORMS += \
 #    src/ui/LLMConfigWidget.ui

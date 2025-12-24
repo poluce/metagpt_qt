@@ -1,5 +1,5 @@
-#include "LLMConfigWidget.h"
-#include "core/utils/ConfigManager.h"
+#include "AgentChatWidget.h"
+#include "core/utils/AppSettings.h"
 #include "core/agent/ToolDispatcher.h"
 #include <QHBoxLayout>
 #include <QMessageBox>
@@ -8,7 +8,7 @@
 #include <QTextCursor>
 #include <QTextDocument>
 
-LLMConfigWidget::LLMConfigWidget(QWidget *parent) : QWidget(parent) {
+AgentChatWidget::AgentChatWidget(QWidget *parent) : QWidget(parent) {
     m_agent = new LLMAgent(this);
     m_toolDispatcher = new ToolDispatcher(this);
     m_toolDispatcher->registerDefaultTools();  // 注册默认工具
@@ -20,15 +20,15 @@ LLMConfigWidget::LLMConfigWidget(QWidget *parent) : QWidget(parent) {
     loadConfig();
 
     // 接收到字节流信息
-    connect(m_agent, &LLMAgent::streamDataReceived, this, &LLMConfigWidget::onStreamDataReceived);
-    connect(m_agent, &LLMAgent::finished, this, &LLMConfigWidget::onFinished);
-    connect(m_agent, &LLMAgent::errorOccurred, this, &LLMConfigWidget::onErrorOccurred);
+    connect(m_agent, &LLMAgent::streamDataReceived, this, &AgentChatWidget::onStreamDataReceived);
+    connect(m_agent, &LLMAgent::finished, this, &AgentChatWidget::onFinished);
+    connect(m_agent, &LLMAgent::errorOccurred, this, &AgentChatWidget::onErrorOccurred);
     
     // 连接工具事件信号（统一处理 started/completed）
-    connect(m_agent, &LLMAgent::toolEvent, this, &LLMConfigWidget::onToolEvent);
+    connect(m_agent, &LLMAgent::toolEvent, this, &AgentChatWidget::onToolEvent);
 }
 
-void LLMConfigWidget::setupUI() {
+void AgentChatWidget::setupUI() {
     setWindowTitle("TmAgent - Team of Agents");
     resize(1200, 600);  // 扩大窗口宽度以容纳三列
 
@@ -57,13 +57,13 @@ void LLMConfigWidget::setupUI() {
     formLayout->addRow("Agent Role:", m_systemPromptEdit);
 
     m_saveBtn = new QPushButton("保存配置 (Save)", this);
-    connect(m_saveBtn, &QPushButton::clicked, this, &LLMConfigWidget::onSaveClicked);
+    connect(m_saveBtn, &QPushButton::clicked, this, &AgentChatWidget::onSaveClicked);
     formLayout->addRow(m_saveBtn);
     
     // 添加工具测试按钮
     m_testToolBtn = new QPushButton("🔧 测试工具调用", this);
     m_testToolBtn->setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;");
-    connect(m_testToolBtn, &QPushButton::clicked, this, &LLMConfigWidget::onTestToolClicked);
+    connect(m_testToolBtn, &QPushButton::clicked, this, &AgentChatWidget::onTestToolClicked);
     formLayout->addRow(m_testToolBtn);
     
     // NOTE: 调试模式复选框（UI 自行管理显示模式）
@@ -138,24 +138,24 @@ void LLMConfigWidget::setupUI() {
 
     mainLayout->addWidget(splitter);
 
-    connect(m_sendBtn, &QPushButton::clicked, this, &LLMConfigWidget::onSendClicked);
-    connect(m_abortBtn, &QPushButton::clicked, this, &LLMConfigWidget::onAbortClicked);
-    connect(m_clearHistoryBtn, &QPushButton::clicked, this, &LLMConfigWidget::onClearHistoryClicked);
+    connect(m_sendBtn, &QPushButton::clicked, this, &AgentChatWidget::onSendClicked);
+    connect(m_abortBtn, &QPushButton::clicked, this, &AgentChatWidget::onAbortClicked);
+    connect(m_clearHistoryBtn, &QPushButton::clicked, this, &AgentChatWidget::onClearHistoryClicked);
 }
 
 // ==================== UI 辅助函数 ====================
 
-void LLMConfigWidget::appendUserMessage(const QString& message) {
+void AgentChatWidget::appendUserMessage(const QString& message) {
     m_chatDisplay->append("<br>");
     m_chatDisplay->append("<b style='color: #2196F3;'>User:</b>");
     m_chatDisplay->append("<p>" + message.toHtmlEscaped() + "</p>");
 }
 
-void LLMConfigWidget::appendAssistantLabel() {
+void AgentChatWidget::appendAssistantLabel() {
     m_chatDisplay->append("<b style='color: #4CAF50;'>Assistant:</b>");
 }
 
-void LLMConfigWidget::setSendingState(bool isSending) {
+void AgentChatWidget::setSendingState(bool isSending) {
     m_sendBtn->setEnabled(!isSending);
     m_abortBtn->setEnabled(isSending);
     m_testToolBtn->setEnabled(!isSending);
@@ -165,29 +165,42 @@ void LLMConfigWidget::setSendingState(bool isSending) {
     }
 }
 
-void LLMConfigWidget::loadConfig() {
-    m_baseUrlEdit->setText(ConfigManager::getBaseUrl());
-    m_apiKeyEdit->setText(ConfigManager::getApiKey());
-    m_modelEdit->setText(ConfigManager::getModel());
-    m_systemPromptEdit->setPlainText(ConfigManager::getSystemPrompt());
+void AgentChatWidget::loadConfig() {
+    m_baseUrlEdit->setText(AppSettings::getBaseUrl());
+    m_apiKeyEdit->setText(AppSettings::getApiKey());
+    m_modelEdit->setText(AppSettings::getModel());
+    m_systemPromptEdit->setPlainText(AppSettings::getSystemPrompt());
     
-    // 同步 Agent 的角色设定
-    m_agent->setSystemPrompt(ConfigManager::getSystemPrompt());
+    // 构造 LLMConfig 并注入 Agent
+    LLMConfig config;
+    config.apiKey = AppSettings::getApiKey();
+    config.baseUrl = AppSettings::getBaseUrl();
+    config.model = AppSettings::getModel();
+    config.systemPrompt = AppSettings::getSystemPrompt();
+    config.temperature = AppSettings::getTemperature();
+    m_agent->setConfig(config);
 }
 
-void LLMConfigWidget::onSaveClicked() {
-    ConfigManager::setBaseUrl(m_baseUrlEdit->text().trimmed());
-    ConfigManager::setApiKey(m_apiKeyEdit->text().trimmed());
-    ConfigManager::setModel(m_modelEdit->text().trimmed());
-    ConfigManager::setSystemPrompt(m_systemPromptEdit->toPlainText().trimmed());
+void AgentChatWidget::onSaveClicked() {
+    // 保存到 AppSettings
+    AppSettings::setBaseUrl(m_baseUrlEdit->text().trimmed());
+    AppSettings::setApiKey(m_apiKeyEdit->text().trimmed());
+    AppSettings::setModel(m_modelEdit->text().trimmed());
+    AppSettings::setSystemPrompt(m_systemPromptEdit->toPlainText().trimmed());
     
-    // 同步 Agent 的角色设定
-    m_agent->setSystemPrompt(m_systemPromptEdit->toPlainText().trimmed());
+    // 构造 LLMConfig 并注入 Agent
+    LLMConfig config;
+    config.apiKey = m_apiKeyEdit->text().trimmed();
+    config.baseUrl = m_baseUrlEdit->text().trimmed();
+    config.model = m_modelEdit->text().trimmed();
+    config.systemPrompt = m_systemPromptEdit->toPlainText().trimmed();
+    config.temperature = AppSettings::getTemperature();
+    m_agent->setConfig(config);
     
     QMessageBox::information(this, "成功", "配置已成功保存至 config.ini");
 }
 
-void LLMConfigWidget::onSendClicked() {
+void AgentChatWidget::onSendClicked() {
     QString prompt = m_inputEdit->toPlainText().trimmed();
     if (prompt.isEmpty()) return;
 
@@ -203,13 +216,13 @@ void LLMConfigWidget::onSendClicked() {
     m_agent->sendMessage(prompt);
 }
 
-void LLMConfigWidget::onAbortClicked() {
+void AgentChatWidget::onAbortClicked() {
     m_agent->abort();
     m_chatDisplay->append("<br><i>[已中断]</i>");
     setSendingState(false);
 }
 
-void LLMConfigWidget::onStreamDataReceived(const QString& data) {
+void AgentChatWidget::onStreamDataReceived(const QString& data) {
     // 首次收到数据时显示 Assistant 标签
     if (m_currentAssistantReply.isEmpty()) {
         if (m_pendingAssistantSeparator) {
@@ -232,7 +245,7 @@ void LLMConfigWidget::onStreamDataReceived(const QString& data) {
     m_chatDisplay->ensureCursorVisible();
 }
 
-void LLMConfigWidget::onFinished(const QString& fullContent) {
+void AgentChatWidget::onFinished(const QString& fullContent) {
     qDebug() << "========== onFinished 被调用 ==========";
     qDebug() << "内容:" << fullContent;
     qDebug() << "当前累积内容长度:" << m_currentAssistantReply.length();
@@ -269,7 +282,7 @@ void LLMConfigWidget::onFinished(const QString& fullContent) {
     
 }
 
-void LLMConfigWidget::updateHistoryDisplay() {
+void AgentChatWidget::updateHistoryDisplay() {
     QJsonArray history = m_agent->getHistory();
     int count = m_agent->getConversationCount();
     
@@ -300,7 +313,7 @@ void LLMConfigWidget::updateHistoryDisplay() {
     m_historyDisplay->setHtml(htmlContent);
 }
 
-void LLMConfigWidget::onClearHistoryClicked() {
+void AgentChatWidget::onClearHistoryClicked() {
     m_agent->clearHistory();
     m_historyDisplay->clear();
     m_historyLabel->setText("对话历史 (共 0 轮)");
@@ -309,7 +322,7 @@ void LLMConfigWidget::onClearHistoryClicked() {
 
 // ==================== 工具调用相关 ====================
 
-void LLMConfigWidget::onTestToolClicked() {
+void AgentChatWidget::onTestToolClicked() {
     // 清空累积内容
     m_currentAssistantReply.clear();
     m_pendingAssistantSeparator = false;
@@ -326,7 +339,7 @@ void LLMConfigWidget::onTestToolClicked() {
 }
 
 
-void LLMConfigWidget::onErrorOccurred(const QString& errorMsg) {
+void AgentChatWidget::onErrorOccurred(const QString& errorMsg) {
     m_chatDisplay->append(QString("<p style='color: red;'>❌ 错误: %1</p>").arg(errorMsg));
     
     // 恢复按钮状态
@@ -336,7 +349,7 @@ void LLMConfigWidget::onErrorOccurred(const QString& errorMsg) {
 
 // ==================== 工具事件处理 ====================
 
-void LLMConfigWidget::onToolEvent(const ToolExecutionEvent& event) {
+void AgentChatWidget::onToolEvent(const ToolExecutionEvent& event) {
     if (event.status == "started") {
         // 工具开始执行
         if (m_isDebugMode) {
@@ -391,3 +404,4 @@ void LLMConfigWidget::onToolEvent(const ToolExecutionEvent& event) {
     
     m_chatDisplay->ensureCursorVisible();
 }
+

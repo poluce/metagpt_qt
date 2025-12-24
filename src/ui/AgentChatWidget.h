@@ -1,5 +1,5 @@
-#ifndef LLMCONFIGWIDGET_H
-#define LLMCONFIGWIDGET_H
+#ifndef AGENTCHATWIDGET_H
+#define AGENTCHATWIDGET_H
 
 #include <QWidget>
 #include <QLineEdit>
@@ -14,10 +14,10 @@
 
 class ToolDispatcher;  // 前向声明
 
-class LLMConfigWidget : public QWidget {
+class AgentChatWidget : public QWidget {
     Q_OBJECT
 public:
-    explicit LLMConfigWidget(QWidget *parent = nullptr);
+    explicit AgentChatWidget(QWidget *parent = nullptr);
 
 private slots:
     void onSaveClicked();
@@ -75,4 +75,5 @@ private:
     bool m_isDebugMode = false;
 };
 
-#endif // LLMCONFIGWIDGET_H
+#endif // AGENTCHATWIDGET_H
+

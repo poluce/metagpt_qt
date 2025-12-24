@@ -1,6 +1,5 @@
 #include "LLMAgent.h"
 #include "ToolDispatcher.h"
-#include "core/utils/ConfigManager.h"
 #include <QJsonDocument>
 #include <QJsonObject>
 #include <QJsonArray>
@@ -35,6 +34,14 @@ void LLMAgent::setSystemPrompt(const QString& prompt) {
     if (!prompt.isEmpty()) {
         m_systemPrompt += "\n" + prompt;  // 追加用户设置的提示词
     }
+}
+
+void LLMAgent::setConfig(const LLMConfig& config) {
+    m_config = config;
+    
+    // 同步更新相关成员变量
+    m_systemPrompt = config.systemPrompt;
+    m_timeoutTimer->setInterval(config.timeoutMs);
 }
 
 void LLMAgent::sendMessage(const QString& prompt) {
@@ -155,11 +162,8 @@ void LLMAgent::setToolDispatcher(ToolDispatcher* dispatcher) {
 }
 
 void LLMAgent::postRequestToServer(const QJsonArray& messages) {
-    // 从配置管理器获取配置
-    QString apiKey = ConfigManager::getApiKey();
-    QString baseUrl = ConfigManager::getBaseUrl();
-    
-    if (apiKey.isEmpty()) {
+    // 从 m_config 获取配置
+    if (!m_config.isValid()) {
         emit errorOccurred("API Key is empty! Please configure it first.");
         return;
     }
@@ -170,11 +174,11 @@ void LLMAgent::postRequestToServer(const QJsonArray& messages) {
     QByteArray jsonData = QJsonDocument(root).toJson(QJsonDocument::Indented);
     qDebug().noquote() << "[Request JSON]" << QString::fromUtf8(jsonData);
     
-    // 发送请求到 DeepSeek API
-    QUrl url(baseUrl + "/chat/completions");  // DeepSeek 使用 /chat/completions
+    // 发送请求到 LLM API
+    QUrl url(m_config.baseUrl + "/chat/completions");
     QNetworkRequest request(url);
     request.setHeader(QNetworkRequest::ContentTypeHeader, "application/json");
-    request.setRawHeader("Authorization", QString("Bearer %1").arg(apiKey).toUtf8());  // DeepSeek 使用 Bearer
+    request.setRawHeader("Authorization", QString("Bearer %1").arg(m_config.apiKey).toUtf8());
     
 
     // 清理旧的请求（如果存在）
@@ -543,11 +547,9 @@ QJsonArray LLMAgent::mergeStreamingToolCalls(const QJsonArray& streamingToolCall
 }
 
 QJsonObject LLMAgent::buildApiRequestBody(const QJsonArray& messages) {
-    QString model = ConfigManager::getModel();
-    
     QJsonObject root;
-    root["model"] = model;
-    root["max_tokens"] = 4096;
+    root["model"] = m_config.model;
+    root["max_tokens"] = m_config.maxTokens;
     root["stream"] = true;
     
     // System Prompt 作为第一条消息（始终存在）

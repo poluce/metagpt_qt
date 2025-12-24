@@ -1,12 +1,17 @@
-#ifndef CONFIGMANAGER_H
-#define CONFIGMANAGER_H
+#ifndef APPSETTINGS_H
+#define APPSETTINGS_H
 
 #include <QString>
 #include <QSettings>
 #include <QCoreApplication>
 #include <QDir>
 
-class ConfigManager {
+/**
+ * @brief 应用配置持久化类
+ * 
+ * 负责将配置读写到 config.ini 文件
+ */
+class AppSettings {
 public:
     static void setApiKey(const QString& key);
     static QString getApiKey();
@@ -30,4 +35,4 @@ private:
     }
 };
 
-#endif // CONFIGMANAGER_H
+#endif // APPSETTINGS_H

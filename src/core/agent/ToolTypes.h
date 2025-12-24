@@ -115,4 +115,28 @@ struct ToolExecutionEvent {
     }
 };
 
+// LLM 配置结构体
+struct LLMConfig {
+    // === Agent 标识 ===
+    QString agentId;           // 唯一标识 (如 "code-agent-1")
+    QString agentName;         // 显示名称 (如 "代码专家")
+    
+    // === 层级控制 ===
+    int agentLevel = 0;        // 当前层级: 0-3 (0 为顶层)
+    static constexpr int MaxLevel = 3;  // 最大层级限制
+    
+    // === LLM 配置 ===
+    QString apiKey;
+    QString baseUrl = "https://api.deepseek.com";
+    QString model = "deepseek-chat";
+    QString systemPrompt = "你是一个专业的 AI 助手。";
+    double temperature = 0.7;
+    int maxTokens = 4096;
+    int timeoutMs = 30000;
+    
+    // === 辅助方法 ===
+    bool isValid() const { return !apiKey.isEmpty(); }
+    bool canDelegate() const { return agentLevel < MaxLevel; }  // 是否可调用子 Agent
+};
+
 #endif // TOOLTYPES_H

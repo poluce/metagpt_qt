@@ -48,6 +48,10 @@ public:
      */
     void setToolDispatcher(ToolDispatcher* dispatcher);
 
+    // 配置管理
+    void setConfig(const LLMConfig& config);
+    LLMConfig config() const { return m_config; }
+
 signals:
     void streamDataReceived(const QString& data);    // 收到流式字节流数据
     void finished(const QString& fullContent);   // 请求圆满结束
@@ -113,6 +117,9 @@ private:
     
     // 工具调度器（Agent 自治执行）
     ToolDispatcher* m_toolDispatcher = nullptr;
+    
+    // Agent 配置
+    LLMConfig m_config;
 
 };
 
