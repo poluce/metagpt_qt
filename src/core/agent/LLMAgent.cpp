@@ -13,7 +13,7 @@ LLMAgent::LLMAgent(QObject *parent) : QObject(parent) {
     m_manager = new QNetworkAccessManager(this);
     m_timeoutTimer = new QTimer(this);
     m_timeoutTimer->setSingleShot(true);
-    m_timeoutTimer->setInterval(30000);  // 30秒超时
+    m_timeoutTimer->setInterval(180000);  // 3分钟超时
     
     // 默认角色定义
     m_systemPrompt = "你是一个专业的 AI 助手，能够帮助用户完成各种任务。"

@@ -134,7 +134,7 @@ struct LLMConfig {
     QString systemPrompt = "你是一个专业的 AI 助手。";
     double temperature = 0.7;
     int maxTokens = 4096;
-    int timeoutMs = 30000;
+    int timeoutMs = 180000;  // 3分钟超时
     
     // === 辅助方法 ===
     bool isValid() const { return !apiKey.isEmpty(); }

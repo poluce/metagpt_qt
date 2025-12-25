@@ -3,6 +3,7 @@ INCLUDEPATH += src
 
 # 第三方库
 include(3rdparty/yaml-cpp.pri)
+include(3rdparty/tree-sitter.pri)
 
 TARGET = TmAgent
 TEMPLATE = app
@@ -19,6 +20,7 @@ SOURCES += \
     src/core/agent/ToolDispatcher.cpp \
     src/core/utils/AppSettings.cpp \
     src/core/utils/ToolSchemaLoader.cpp \
+    src/core/parser/TreeSitterParser.cpp \
     src/ui/AgentChatWidget.cpp
 
 HEADERS += \
@@ -26,6 +28,7 @@ HEADERS += \
     src/core/agent/ToolDispatcher.h \
     src/core/utils/AppSettings.h \
     src/core/utils/ToolSchemaLoader.h \
+    src/core/parser/TreeSitterParser.h \
     src/ui/AgentChatWidget.h
 
 # FORMS += \
