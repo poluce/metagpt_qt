@@ -1,7 +1,9 @@
 #include "ToolDispatcher.h"
 #include "core/tools/FileTool.h"
 #include "core/tools/ShellTool.h"
+#include "core/utils/ToolSchemaLoader.h"
 #include <QDebug>
+#include <QCoreApplication>
 
 ToolDispatcher::ToolDispatcher(QObject *parent) : QObject(parent) {
 }
@@ -19,13 +21,70 @@ void ToolDispatcher::registerTool(const Tool& schema,
 }
 
 void ToolDispatcher::registerDefaultTools() {
-    // FileTool
-    registerTool(FileTool::getCreateFileSchema(), "创建文件", FileTool::executeCreateFile);
-    registerTool(FileTool::getViewFileSchema(), "读取文件", FileTool::executeViewFile);
-    registerTool(FileTool::getReadFileLinesSchema(), "读取文件行", FileTool::executeReadFileLines);
+    // 从 YAML 文件加载工具定义（尝试多个路径）
+    QStringList possiblePaths = {
+        QCoreApplication::applicationDirPath() + "/resources/tools.yaml",
+        QCoreApplication::applicationDirPath() + "/../resources/tools.yaml",
+        QDir::currentPath() + "/resources/tools.yaml",
+        "resources/tools.yaml"
+    };
     
-    // ShellTool
-    registerTool(ShellTool::getExecuteCommandSchema(), "执行命令", ShellTool::execute);
+    QVector<Tool> tools;
+    for (const QString& path : possiblePaths) {
+        qDebug() << "[ToolDispatcher] 尝试加载:" << path;
+        if (QFile::exists(path)) {
+            tools = ToolSchemaLoader::loadFromFile(path);
+            if (!tools.isEmpty()) {
+                qDebug() << "[ToolDispatcher] 成功从" << path << "加载" << tools.size() << "个工具";
+                break;
+            }
+        }
+    }
+    
+    if (tools.isEmpty()) {
+        qWarning() << "[ToolDispatcher] 警告: 未能加载任何工具定义!";
+    }
+    
+    // 工具名称 -> 执行函数的映射表
+    QMap<QString, std::function<QString(const QJsonObject&)>> executors = {
+        // FileTool
+        {FileTool::CREATE_FILE, FileTool::executeCreateFile},
+        {FileTool::VIEW_FILE, FileTool::executeViewFile},
+        {FileTool::READ_FILE_LINES, FileTool::executeReadFileLines},
+        {FileTool::REPLACE_IN_FILE, FileTool::executeReplaceInFile},
+        {FileTool::DELETE_FILE, FileTool::executeDeleteFile},
+        {FileTool::LIST_DIRECTORY, FileTool::executeListDirectory},
+        {FileTool::GREP_SEARCH, FileTool::executeGrepSearch},
+        {FileTool::FIND_BY_NAME, FileTool::executeFindByName},
+        {FileTool::INSERT_CONTENT, FileTool::executeInsertContent},
+        {FileTool::MULTI_REPLACE_IN_FILE, FileTool::executeMultiReplaceInFile},
+        // ShellTool
+        {ShellTool::EXECUTE_COMMAND, ShellTool::execute}
+    };
+    
+    // 工具名称 -> 中文描述的映射表
+    QMap<QString, QString> descriptions = {
+        {FileTool::CREATE_FILE, "创建文件"},
+        {FileTool::VIEW_FILE, "读取文件"},
+        {FileTool::READ_FILE_LINES, "读取文件行"},
+        {FileTool::REPLACE_IN_FILE, "替换文件内容"},
+        {FileTool::DELETE_FILE, "删除文件"},
+        {FileTool::LIST_DIRECTORY, "列出目录"},
+        {FileTool::GREP_SEARCH, "搜索内容"},
+        {FileTool::FIND_BY_NAME, "按名称搜索"},
+        {FileTool::INSERT_CONTENT, "插入内容"},
+        {FileTool::MULTI_REPLACE_IN_FILE, "多处替换"},
+        {ShellTool::EXECUTE_COMMAND, "执行命令"}
+    };
+    
+    // 注册所有工具
+    for (const Tool& tool : tools) {
+        if (executors.contains(tool.name)) {
+            registerTool(tool, descriptions.value(tool.name, tool.name), executors[tool.name]);
+        } else {
+            qWarning() << "[ToolDispatcher] 工具" << tool.name << "没有对应的执行函数，跳过注册";
+        }
+    }
 }
 
 QList<Tool> ToolDispatcher::getAllToolSchemas() const {
@@ -51,3 +110,4 @@ QString ToolDispatcher::dispatch(const ToolCall& call) {
     
     return QString("错误: 未知的工具 %1").arg(toolName);
 }
+

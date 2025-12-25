@@ -1,0 +1,160 @@
+# 工具定义文件
+# 所有 Agent 可用工具的 Schema 定义
+
+tools:
+  # ==================== 文件工具 ====================
+
+  - name: create_file
+    description: "在指定目录创建一个文本文件"
+    parameters:
+      - name: directory
+        type: string
+        description: "目标目录路径,例如: E:/test"
+        required: true
+      - name: filename
+        type: string
+        description: "文件名,例如: hello.txt"
+        required: true
+      - name: content
+        type: string
+        description: "文件内容,如果未指定则创建空文件"
+        required: false
+
+  - name: view_file
+    description: "读取文件的完整内容。直接使用 Qt 的文件 API 读取，自动处理 UTF-8 编码，比执行 cat 命令更可靠。返回文件路径、大小、行数和完整内容。"
+    parameters:
+      - name: file_path
+        type: string
+        description: "要读取的文件的绝对路径，例如: F:/Documents/test.md 或 /e/Documents/test.md (MSYS格式也支持)"
+        required: true
+
+  - name: read_file_lines
+    description: "读取文件的指定行范围。适用于查看大文件的特定部分。行号从 1 开始，结果包含行号前缀方便定位。"
+    parameters:
+      - name: file_path
+        type: string
+        description: "要读取的文件的绝对路径"
+        required: true
+      - name: start_line
+        type: integer
+        description: "起始行号 (从 1 开始)"
+        required: true
+      - name: end_line
+        type: integer
+        description: "结束行号 (包含该行)"
+        required: true
+
+  - name: replace_in_file
+    description: "替换文件中的指定内容。使用精确字符串匹配，适合修改代码。"
+    parameters:
+      - name: file_path
+        type: string
+        description: "要修改的文件的绝对路径"
+        required: true
+      - name: target_content
+        type: string
+        description: "要被替换的原始内容（精确匹配，包含空格和换行）"
+        required: true
+      - name: replacement_content
+        type: string
+        description: "替换后的新内容"
+        required: true
+
+  - name: delete_file
+    description: "删除指定文件。谨慎使用，删除后无法恢复。"
+    parameters:
+      - name: file_path
+        type: string
+        description: "要删除的文件的绝对路径"
+        required: true
+
+  - name: list_directory
+    description: "列出目录中的文件和子目录。返回文件名、类型和大小信息。"
+    parameters:
+      - name: directory_path
+        type: string
+        description: "要列出的目录的绝对路径"
+        required: true
+      - name: recursive
+        type: boolean
+        description: "是否递归列出子目录（默认 false）"
+        required: false
+
+  - name: grep_search
+    description: "在文件中搜索包含指定文本的行。返回匹配的文件名、行号和内容。"
+    parameters:
+      - name: pattern
+        type: string
+        description: "要搜索的文本或正则表达式"
+        required: true
+      - name: directory
+        type: string
+        description: "搜索的目录路径"
+        required: true
+      - name: file_pattern
+        type: string
+        description: "文件名模式（如 *.cpp, *.h），默认搜索所有文件"
+        required: false
+
+  - name: find_by_name
+    description: "按文件名模式搜索文件。支持通配符 * 和 ?。"
+    parameters:
+      - name: pattern
+        type: string
+        description: "文件名模式（如 *.cpp, Main*.java, test?.py）"
+        required: true
+      - name: directory
+        type: string
+        description: "搜索的目录路径"
+        required: true
+
+  - name: insert_content
+    description: "在文件的指定行之后插入内容。比替换更精确，适合添加新代码。"
+    parameters:
+      - name: file_path
+        type: string
+        description: "要修改的文件的绝对路径"
+        required: true
+      - name: line_number
+        type: integer
+        description: "在此行之后插入（行号从 1 开始，0 表示插入到文件开头）"
+        required: true
+      - name: content
+        type: string
+        description: "要插入的内容"
+        required: true
+
+  - name: multi_replace_in_file
+    description: "一次替换文件中多处不连续的内容。比多次调用 replace_in_file 更高效。"
+    parameters:
+      - name: file_path
+        type: string
+        description: "要修改的文件的绝对路径"
+        required: true
+      - name: replacements
+        type: array
+        description: "替换操作数组，每个元素包含 target_content 和 replacement_content"
+        required: true
+        items:
+          type: object
+          properties:
+            - name: target_content
+              type: string
+              description: "要被替换的原始内容"
+            - name: replacement_content
+              type: string
+              description: "替换后的新内容"
+
+  # ==================== Shell 工具 ====================
+
+  - name: execute_command
+    description: "执行终端命令并返回结果。可以执行 dir, git, qmake, make 等命令。同一目的的命令尽量合并为一次调用(例如: pwd && ls -la),避免连续多次查询目录/结构。"
+    parameters:
+      - name: command
+        type: string
+        description: "要执行的命令,例如: dir, git status, qmake"
+        required: true
+      - name: working_directory
+        type: string
+        description: "工作目录 (可选),例如: E:/Document/metagpt_qt-1"
+        required: false

@@ -10,7 +10,6 @@
 #include <QJsonObject>
 #include <QJsonArray>
 #include <QMessageBox>
-#include "core/agent/LLMAgent.h"
 
 /**
  * @brief Shell 命令执行工具
@@ -24,32 +23,6 @@ class ShellTool {
 public:
     // ==================== 工具名称常量 ====================
     static constexpr const char* EXECUTE_COMMAND = "execute_command";
-    
-    // ==================== 工具 Schema 定义 ====================
-    
-    /**
-     * @brief 获取 execute_command 工具的 Schema 定义
-     */
-    static Tool getExecuteCommandSchema() {
-        Tool tool;
-        tool.name = EXECUTE_COMMAND;
-        tool.description = "执行终端命令并返回结果。可以执行 dir, git, qmake, make 等命令。同一目的的命令尽量合并为一次调用(例如: pwd && ls -la),避免连续多次查询目录/结构。";
-        tool.inputSchema = QJsonObject{
-            {"type", "object"},
-            {"properties", QJsonObject{
-                {"command", QJsonObject{
-                    {"type", "string"},
-                    {"description", "要执行的命令,例如: dir, git status, qmake"}
-                }},
-                {"working_directory", QJsonObject{
-                    {"type", "string"},
-                    {"description", "工作目录 (可选),例如: E:/Document/metagpt_qt-1"}
-                }}
-            }},
-            {"required", QJsonArray{"command"}}
-        };
-        return tool;
-    }
     
     // ==================== 工具执行入口（接收 JSON 参数） ====================
     

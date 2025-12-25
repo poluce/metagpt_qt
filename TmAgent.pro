@@ -1,6 +1,9 @@
 QT       += core gui network widgets
 INCLUDEPATH += src
 
+# 第三方库
+include(3rdparty/yaml-cpp.pri)
+
 TARGET = TmAgent
 TEMPLATE = app
 
@@ -15,12 +18,14 @@ SOURCES += \
     src/core/agent/LLMAgent.cpp \
     src/core/agent/ToolDispatcher.cpp \
     src/core/utils/AppSettings.cpp \
+    src/core/utils/ToolSchemaLoader.cpp \
     src/ui/AgentChatWidget.cpp
 
 HEADERS += \
     src/core/agent/LLMAgent.h \
     src/core/agent/ToolDispatcher.h \
     src/core/utils/AppSettings.h \
+    src/core/utils/ToolSchemaLoader.h \
     src/ui/AgentChatWidget.h
 
 # FORMS += \
@@ -31,16 +36,14 @@ qnx: target.path = /tmp/$${TARGET}/bin
 else: unix:!android: target.path = /opt/$${TARGET}/bin
 !isEmpty(target.path): INSTALLS += target.path
 
-# 自动处理 Windows 下的 OpenSSL DLL 拷贝
+# 自动复制 resources 目录到构建输出目录
 win32 {
-    # 处理路径中的斜杠以适应 Windows 命令行
-    OPENSSL_SRC_DIR = $$replace(PWD, /, \\)\\openssl
+    RESOURCES_SRC_DIR = $$replace(PWD, /, \\)\\resources
     BUILD_DEST_DIR = $$replace(OUT_PWD, /, \\)
 
-    # 根据配置 (Debug/Release) 拷贝到对应的子目录
     CONFIG(debug, debug|release) {
-        # QMAKE_POST_LINK += xcopy /Y /D /I \"$$OPENSSL_SRC_DIR\\*.dll\" \"$$BUILD_DEST_DIR\\debug\\\"
+        QMAKE_POST_LINK += xcopy /Y /E /I \"$$RESOURCES_SRC_DIR\" \"$$BUILD_DEST_DIR\\debug\\resources\\\"
     } else {
-        # QMAKE_POST_LINK += xcopy /Y /D /I \"$$OPENSSL_SRC_DIR\\*.dll\" \"$$BUILD_DEST_DIR\\release\\\"
+        QMAKE_POST_LINK += xcopy /Y /E /I \"$$RESOURCES_SRC_DIR\" \"$$BUILD_DEST_DIR\\release\\resources\\\"
     }
 }
