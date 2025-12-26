@@ -6,7 +6,7 @@
 TREE_SITTER_ROOT = $$PWD/tree-sitter-0.26.3
 TREE_SITTER_CPP_ROOT = $$PWD/tree-sitter-cpp-0.23.4
 
-# 启用 MinGW 的 C99 格式说明符支持（解决 %zu 警告）
+# 启用 MinGW 的 C99 格式说明符支持（修复 snprintf/ts_node_string 问题）
 win32-g++: DEFINES += __USE_MINGW_ANSI_STDIO=1
 
 # 头文件路径

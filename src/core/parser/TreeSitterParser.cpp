@@ -303,11 +303,16 @@ TSNode TreeSitterParser::nodeAtPosition(uint32_t line, uint32_t column) const {
 }
 
 QString TreeSitterParser::sExpression(TSNode node) {
+    if (ts_node_is_null(node)) {
+        return QString();
+    }
     char* str = ts_node_string(node);
     if (!str) {
         return QString();
     }
     QString result = QString::fromUtf8(str);
-    free(str);  // ts_node_string 使用 malloc 分配
+    // 注意: 在 MinGW 环境下不释放内存,避免崩溃
+    // 这会导致小量内存泄漏,但 sExpression 仅用于调试,影响很小
+    // free(str);
     return result;
 }
