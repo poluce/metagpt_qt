@@ -1,10 +1,206 @@
 #include "TreeSitterParser.h"
+#include <tree_sitter/api.h>
 #include <cstdlib>
+#include <cstring>
 
 // tree-sitter-cpp 语言声明
 extern "C" {
     const TSLanguage* tree_sitter_cpp();
 }
+
+// ============================================================================
+// SyntaxNode 实现
+// ============================================================================
+
+// 辅助函数：将内部数据转换为 TSNode
+static TSNode toTSNode(const uint32_t context[4], const void* id, const void* tree) {
+    TSNode node;
+    memcpy(node.context, context, sizeof(node.context));
+    node.id = id;
+    node.tree = static_cast<const TSTree*>(tree);
+    return node;
+}
+
+// SyntaxNode 内部辅助方法实现
+SyntaxNode SyntaxNode::fromInternal(const void* nodeData, const TreeSitterParser* parser) {
+    return SyntaxNode(nodeData, parser);
+}
+
+SyntaxNode::SyntaxNode() 
+    : m_context{0, 0, 0, 0}
+    , m_id(nullptr)
+    , m_tree(nullptr)
+    , m_parser(nullptr) {
+}
+
+SyntaxNode::SyntaxNode(const void* nodeData, const TreeSitterParser* parser)
+    : m_parser(parser) {
+    if (nodeData) {
+        const TSNode* node = static_cast<const TSNode*>(nodeData);
+        memcpy(m_context, node->context, sizeof(m_context));
+        m_id = node->id;
+        m_tree = node->tree;
+    } else {
+        memset(m_context, 0, sizeof(m_context));
+        m_id = nullptr;
+        m_tree = nullptr;
+    }
+}
+
+QString SyntaxNode::type() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    const char* t = ts_node_type(node);
+    return t ? QString::fromUtf8(t) : QString();
+}
+
+QString SyntaxNode::text() const {
+    if (!m_parser || isNull()) {
+        return QString();
+    }
+    
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    uint32_t start = ts_node_start_byte(node);
+    uint32_t end = ts_node_end_byte(node);
+    
+    const QByteArray& source = m_parser->source();
+    if (start >= static_cast<uint32_t>(source.size()) ||
+        end > static_cast<uint32_t>(source.size()) ||
+        start > end) {
+        return QString();
+    }
+    
+    return QString::fromUtf8(source.mid(static_cast<int>(start),
+                                         static_cast<int>(end - start)));
+}
+
+bool SyntaxNode::isNull() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    return ts_node_is_null(node);
+}
+
+bool SyntaxNode::isNamed() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    return ts_node_is_named(node);
+}
+
+bool SyntaxNode::hasError() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    return ts_node_has_error(node);
+}
+
+bool SyntaxNode::isMissing() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    return ts_node_is_missing(node);
+}
+
+uint32_t SyntaxNode::startLine() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    return ts_node_start_point(node).row + 1;  // 1-based
+}
+
+uint32_t SyntaxNode::endLine() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    return ts_node_end_point(node).row + 1;
+}
+
+uint32_t SyntaxNode::startColumn() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    return ts_node_start_point(node).column;
+}
+
+uint32_t SyntaxNode::endColumn() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    return ts_node_end_point(node).column;
+}
+
+uint32_t SyntaxNode::startByte() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    return ts_node_start_byte(node);
+}
+
+uint32_t SyntaxNode::endByte() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    return ts_node_end_byte(node);
+}
+
+uint32_t SyntaxNode::childCount() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    return ts_node_child_count(node);
+}
+
+SyntaxNode SyntaxNode::child(uint32_t index) const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    TSNode child = ts_node_child(node, index);
+    return SyntaxNode::fromInternal(&child, m_parser);
+}
+
+uint32_t SyntaxNode::namedChildCount() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    return ts_node_named_child_count(node);
+}
+
+SyntaxNode SyntaxNode::namedChild(uint32_t index) const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    TSNode child = ts_node_named_child(node, index);
+    return SyntaxNode::fromInternal(&child, m_parser);
+}
+
+SyntaxNode SyntaxNode::childByFieldName(const QString& name) const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    QByteArray utf8 = name.toUtf8();
+    TSNode child = ts_node_child_by_field_name(node, utf8.constData(),
+                                                static_cast<uint32_t>(utf8.size()));
+    return SyntaxNode::fromInternal(&child, m_parser);
+}
+
+SyntaxNode SyntaxNode::parent() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    TSNode p = ts_node_parent(node);
+    return SyntaxNode::fromInternal(&p, m_parser);
+}
+
+SyntaxNode SyntaxNode::nextSibling() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    TSNode sibling = ts_node_next_sibling(node);
+    return SyntaxNode::fromInternal(&sibling, m_parser);
+}
+
+SyntaxNode SyntaxNode::prevSibling() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    TSNode sibling = ts_node_prev_sibling(node);
+    return SyntaxNode::fromInternal(&sibling, m_parser);
+}
+
+SyntaxNode SyntaxNode::nextNamedSibling() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    TSNode sibling = ts_node_next_named_sibling(node);
+    return SyntaxNode::fromInternal(&sibling, m_parser);
+}
+
+SyntaxNode SyntaxNode::prevNamedSibling() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    TSNode sibling = ts_node_prev_named_sibling(node);
+    return SyntaxNode::fromInternal(&sibling, m_parser);
+}
+
+QString SyntaxNode::sExpression() const {
+    TSNode node = toTSNode(m_context, m_id, m_tree);
+    if (ts_node_is_null(node)) {
+        return QString();
+    }
+    char* str = ts_node_string(node);
+    if (!str) {
+        return QString();
+    }
+    QString result = QString::fromUtf8(str);
+    // 注意: 在 MinGW 环境下不释放内存,避免崩溃
+    // free(str);
+    return result;
+}
+
+// ============================================================================
+// TreeSitterParser 实现
+// ============================================================================
 
 TreeSitterParser::TreeSitterParser() {
     m_parser = ts_parser_new();
@@ -20,6 +216,9 @@ TreeSitterParser::TreeSitterParser() {
 }
 
 TreeSitterParser::~TreeSitterParser() {
+    if (m_oldTree) {
+        ts_tree_delete(m_oldTree);
+    }
     if (m_tree) {
         ts_tree_delete(m_tree);
     }
@@ -28,31 +227,16 @@ TreeSitterParser::~TreeSitterParser() {
     }
 }
 
-bool TreeSitterParser::setLanguage(const TSLanguage* language) {
-    if (!m_parser) {
-        m_lastError = QStringLiteral("Parser not initialized");
-        return false;
-    }
-    if (m_hasParsed) {
-        m_lastError = QStringLiteral("Cannot change language after parsing (call reset() first)");
-        return false;
-    }
-    if (!ts_parser_set_language(m_parser, language)) {
-        m_lastError = QStringLiteral("Failed to set language (ABI version mismatch?)");
-        return false;
-    }
-    m_lastError.clear();  // 成功时清空错误信息
-    return true;
-}
-
 void TreeSitterParser::setTimeout(uint64_t microseconds) {
     Q_UNUSED(microseconds);
-    // 暂不支持：tree-sitter 0.26 无 ts_parser_set_timeout_micros
-    // 若需超时控制，可使用 TSParseOptions + progress_callback 实现
     m_lastError = QStringLiteral("setTimeout not supported in this version");
 }
 
 void TreeSitterParser::reset() {
+    if (m_oldTree) {
+        ts_tree_delete(m_oldTree);
+        m_oldTree = nullptr;
+    }
     if (m_tree) {
         ts_tree_delete(m_tree);
         m_tree = nullptr;
@@ -76,7 +260,6 @@ bool TreeSitterParser::parse(const QByteArray& utf8Source) {
         return false;
     }
 
-    // 释放旧树
     if (m_tree) {
         ts_tree_delete(m_tree);
         m_tree = nullptr;
@@ -92,7 +275,7 @@ bool TreeSitterParser::parse(const QByteArray& utf8Source) {
     }
 
     m_hasParsed = true;
-    m_hasEdit = false;  // 新解析后重置编辑标记
+    m_hasEdit = false;
     m_lastError.clear();
     return true;
 }
@@ -106,7 +289,6 @@ void TreeSitterParser::applyEdit(uint32_t startByte, uint32_t oldEndByte, uint32
         return;
     }
 
-    // 输入是 1-based 行号，转换为 0-based
     TSInputEdit edit;
     edit.start_byte = startByte;
     edit.old_end_byte = oldEndByte;
@@ -117,7 +299,7 @@ void TreeSitterParser::applyEdit(uint32_t startByte, uint32_t oldEndByte, uint32
 
     ts_tree_edit(m_tree, &edit);
     m_hasEdit = true;
-    m_lastError.clear();  // 成功时清空错误信息
+    m_lastError.clear();
 }
 
 bool TreeSitterParser::reparse(const QString& newSource) {
@@ -130,11 +312,14 @@ bool TreeSitterParser::reparse(const QByteArray& newUtf8Source) {
         return false;
     }
 
-    // 保存旧树和旧源码用于失败回滚
+    // 释放上一次保存的旧树
+    if (m_oldTree) {
+        ts_tree_delete(m_oldTree);
+        m_oldTree = nullptr;
+    }
+
     TSTree* oldTree = m_tree;
     QByteArray oldSource = m_source;
-
-    // 若未调用 applyEdit，传 nullptr 实现真正的全量解析
     TSTree* treeForParsing = m_hasEdit ? oldTree : nullptr;
 
     m_source = newUtf8Source;
@@ -142,29 +327,27 @@ bool TreeSitterParser::reparse(const QByteArray& newUtf8Source) {
                                      static_cast<uint32_t>(m_source.size()));
 
     if (!m_tree) {
-        // 解析失败，回滚到旧树
         m_tree = oldTree;
         m_source = oldSource;
         m_lastError = QStringLiteral("Reparsing failed");
         return false;
     }
 
-    // 成功后释放旧树
-    if (oldTree) {
-        ts_tree_delete(oldTree);
-    }
+    // 保存旧树用于 getChangedRanges()
+    m_oldTree = oldTree;
 
-    m_hasEdit = false;  // 重置编辑标记
+    m_hasEdit = false;
     m_hasParsed = true;
     m_lastError.clear();
     return true;
 }
 
-TSNode TreeSitterParser::rootNode() const {
+SyntaxNode TreeSitterParser::rootNode() const {
     if (m_tree) {
-        return ts_tree_root_node(m_tree);
+        TSNode root = ts_tree_root_node(m_tree);
+        return SyntaxNode::fromInternal(&root, this);
     }
-    return TSNode{};  // null node
+    return SyntaxNode();
 }
 
 bool TreeSitterParser::hasTree() const {
@@ -182,137 +365,41 @@ QString TreeSitterParser::lastError() const {
     return m_lastError;
 }
 
-// === 节点信息（静态方法） ===
-
-QString TreeSitterParser::nodeType(TSNode node) {
-    const char* type = ts_node_type(node);
-    return type ? QString::fromUtf8(type) : QString();
-}
-
-uint32_t TreeSitterParser::startLine(TSNode node) {
-    return ts_node_start_point(node).row + 1;  // 0-based 转 1-based
-}
-
-uint32_t TreeSitterParser::endLine(TSNode node) {
-    return ts_node_end_point(node).row + 1;
-}
-
-uint32_t TreeSitterParser::startColumn(TSNode node) {
-    return ts_node_start_point(node).column;
-}
-
-uint32_t TreeSitterParser::endColumn(TSNode node) {
-    return ts_node_end_point(node).column;
-}
-
-uint32_t TreeSitterParser::startByte(TSNode node) {
-    return ts_node_start_byte(node);
-}
-
-uint32_t TreeSitterParser::endByte(TSNode node) {
-    return ts_node_end_byte(node);
-}
-
-bool TreeSitterParser::isNamed(TSNode node) {
-    return ts_node_is_named(node);
-}
-
-bool TreeSitterParser::nodeHasError(TSNode node) {
-    return ts_node_has_error(node);
-}
-
-bool TreeSitterParser::isMissing(TSNode node) {
-    return ts_node_is_missing(node);
-}
-
-bool TreeSitterParser::isNull(TSNode node) {
-    return ts_node_is_null(node);
-}
-
-QString TreeSitterParser::nodeText(TSNode node) const {
-    if (m_source.isEmpty() || ts_node_is_null(node)) {
-        return QString();
-    }
-
-    uint32_t start = ts_node_start_byte(node);
-    uint32_t end = ts_node_end_byte(node);
-
-    if (start >= static_cast<uint32_t>(m_source.size()) ||
-        end > static_cast<uint32_t>(m_source.size()) ||
-        start > end) {
-        return QString();
-    }
-
-    return QString::fromUtf8(m_source.mid(static_cast<int>(start),
-                                           static_cast<int>(end - start)));
-}
-
-// === 节点遍历 ===
-
-uint32_t TreeSitterParser::childCount(TSNode node) {
-    return ts_node_child_count(node);
-}
-
-TSNode TreeSitterParser::child(TSNode node, uint32_t index) {
-    return ts_node_child(node, index);
-}
-
-uint32_t TreeSitterParser::namedChildCount(TSNode node) {
-    return ts_node_named_child_count(node);
-}
-
-TSNode TreeSitterParser::namedChild(TSNode node, uint32_t index) {
-    return ts_node_named_child(node, index);
-}
-
-TSNode TreeSitterParser::childByFieldName(TSNode node, const QString& fieldName) {
-    QByteArray utf8 = fieldName.toUtf8();
-    return ts_node_child_by_field_name(node, utf8.constData(),
-                                        static_cast<uint32_t>(utf8.size()));
-}
-
-TSNode TreeSitterParser::parent(TSNode node) {
-    return ts_node_parent(node);
-}
-
-TSNode TreeSitterParser::nextSibling(TSNode node) {
-    return ts_node_next_sibling(node);
-}
-
-TSNode TreeSitterParser::prevSibling(TSNode node) {
-    return ts_node_prev_sibling(node);
-}
-
-TSNode TreeSitterParser::nextNamedSibling(TSNode node) {
-    return ts_node_next_named_sibling(node);
-}
-
-TSNode TreeSitterParser::prevNamedSibling(TSNode node) {
-    return ts_node_prev_named_sibling(node);
-}
-
-TSNode TreeSitterParser::nodeAtPosition(uint32_t line, uint32_t column) const {
+SyntaxNode TreeSitterParser::nodeAtPosition(uint32_t line, uint32_t column) const {
     if (!m_tree) {
-        return TSNode{};
+        return SyntaxNode();
     }
 
-    // 1-based 转 0-based
     TSPoint point = {line > 0 ? line - 1 : 0, column};
     TSNode root = ts_tree_root_node(m_tree);
-    return ts_node_descendant_for_point_range(root, point, point);
+    TSNode node = ts_node_descendant_for_point_range(root, point, point);
+    return SyntaxNode::fromInternal(&node, this);
 }
 
-QString TreeSitterParser::sExpression(TSNode node) {
-    if (ts_node_is_null(node)) {
-        return QString();
+QVector<ChangedRange> TreeSitterParser::getChangedRanges() const {
+    QVector<ChangedRange> result;
+    
+    if (!m_oldTree || !m_tree) {
+        return result;
     }
-    char* str = ts_node_string(node);
-    if (!str) {
-        return QString();
+    
+    uint32_t rangeCount = 0;
+    TSRange* ranges = ts_tree_get_changed_ranges(m_oldTree, m_tree, &rangeCount);
+    
+    if (ranges && rangeCount > 0) {
+        result.reserve(static_cast<int>(rangeCount));
+        for (uint32_t i = 0; i < rangeCount; ++i) {
+            ChangedRange cr;
+            cr.startLine = ranges[i].start_point.row + 1;
+            cr.startColumn = ranges[i].start_point.column;
+            cr.endLine = ranges[i].end_point.row + 1;
+            cr.endColumn = ranges[i].end_point.column;
+            cr.startByte = ranges[i].start_byte;
+            cr.endByte = ranges[i].end_byte;
+            result.append(cr);
+        }
+        free(ranges);
     }
-    QString result = QString::fromUtf8(str);
-    // 注意: 在 MinGW 环境下不释放内存,避免崩溃
-    // 这会导致小量内存泄漏,但 sExpression 仅用于调试,影响很小
-    // free(str);
+    
     return result;
 }
